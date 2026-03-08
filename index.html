@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Satellite Orbit & Trajectory Visualizer</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'space-black': '#0a0a1a',
+                        'space-dark': '#1a1a2e',
+                        'space-light': '#2a2a4e',
+                        'cyan-electric': '#00d4ff',
+                        'orange-accent': '#ff6b35',
+                        'purple-accent': '#7b2cbf',
+                        'green-leo': '#00ff88',
+                        'cyan-meo': '#00d4ff',
+                        'orange-geo': '#ff6b35',
+                        'magenta-polar': '#ff00ff',
+                    },
+                    fontFamily: {
+                        'orbitron': ['Orbitron', 'sans-serif'],
+                        'roboto-mono': ['Roboto Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Roboto Mono', monospace; background: #0a0a1a; color: #fff; overflow: hidden; }
+        #canvas-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; }
+        .header { position: fixed; top: 0; left: 0; right: 0; height: 64px; background: rgba(26, 26, 46, 0.95); border-bottom: 1px solid rgba(255,255,255,0.1); z-index: 20; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; }
+        .sidebar { position: fixed; left: 0; top: 64px; bottom: 192px; width: 288px; background: rgba(26, 26, 46, 0.9); border-right: 1px solid rgba(255,255,255,0.1); overflow-y: auto; z-index: 10; }
+        .dashboard-panel { position: fixed; bottom: 0; left: 0; right: 0; height: 192px; background: rgba(26, 26, 46, 0.95); border-top: 1px solid rgba(0, 212, 255, 0.3); display: flex; z-index: 10; }
+        .main-content { position: fixed; top: 64px; left: 288px; right: 0; bottom: 192px; }
+        .loading-spinner { width: 40px; height: 40px; border: 3px solid #1a1a2e; border-top: 3px solid #00d4ff; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1a1a2e; }
+        ::-webkit-scrollbar-thumb { background: #00d4ff; border-radius: 3px; }
+        .btn-primary { padding: 8px 16px; background: #00d4ff; color: #0a0a1a; font-weight: 600; border-radius: 4px; transition: all 0.3s; cursor: pointer; border: none; }
+        .btn-primary:hover { box-shadow: 0 0 15px rgba(0, 212, 255, 0.5); }
+        .btn-secondary { padding: 8px 16px; border: 1px solid #00d4ff; color: #00d4ff; background: transparent; font-weight: 600; border-radius: 4px; transition: all 0.3s; cursor: pointer; }
+        .btn-secondary:hover { background: rgba(0, 212, 255, 0.1); }
+        .input-field { width: 100%; padding: 8px 12px; background: #2a2a4e; border: 1px solid #2a2a4e; border-radius: 4px; color: #fff; }
+        .input-field:focus { outline: none; border-color: #00d4ff; box-shadow: 0 0 10px rgba(0, 212, 255, 0.3); }
+        .card { background: rgba(42, 42, 78, 0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 16px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <div id="canvas-container"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo, createContext, useContext } = React;
+
+        // Constants
+        const EARTH_RADIUS_KM = 6371;
+        const MU_KM = 3.986004418e5;
+        const EARTH_RADIUS = 6.371;
+
+        // Sample satellite data
+        const sampleSatellites = [
+            { noradId: 25544, name: "ISS (ZARYA)", orbitType: "LEO", details: { altitude: 420, inclination: 51.64, eccentricity: 0.0006705, period: 92.68, apogee: 423, perigee: 417, semiMajorAxis: 6780, raan: 208.92, argumentOfPerigee: 35.08, meanAnomaly: 325.03 } },
+            { noradId: 20580, name: "HUBBLE SPACE TELESCOPE", orbitType: "LEO", details: { altitude: 540, inclination: 28.47, eccentricity: 0.0002345, period: 95.4, apogee: 545, perigee: 535, semiMajorAxis: 6900, raan: 325.2, argumentOfPerigee: 190.45, meanAnomaly: 120.35 } },
+            { noradId: 44713, name: "STARLINK-1007", orbitType: "LEO", details: { altitude: 550, inclination: 53.0, eccentricity: 0.0008601, period: 95.8, apogee: 555, perigee: 545, semiMajorAxis: 6925, raan: 350.23, argumentOfPerigee: 45.12, meanAnomaly: 315.68 } },
+            { noradId: 39533, name: "GPS BIIR-2", orbitType: "MEO", details: { altitude: 20200, inclination: 55.18, eccentricity: 0.0008215, period: 717.94, apogee: 20300, perigee: 20100, semiMajorAxis: 26560, raan: 120.46, argumentOfPerigee: 250.12, meanAnomaly: 109.88 } },
+            { noradId: 39536, name: "GPS BIIR-5", orbitType: "MEO", details: { altitude: 20200, inclination: 55.18, eccentricity: 0.0008215, period: 717.94, apogee: 20300, perigee: 20100, semiMajorAxis: 26560, raan: 120.46, argumentOfPerigee: 250.12, meanAnomaly: 109.88 } },
+            { noradId: 32276, name: "GLONASS-M 735", orbitType: "MEO", details: { altitude: 19100, inclination: 64.8, eccentricity: 0.0000123, period: 675.7, apogee: 19130, perigee: 19070, semiMajorAxis: 25508, raan: 45.12, argumentOfPerigee: 320.57, meanAnomaly: 39.43 } },
+            { noradId: 43060, name: "GALILEO 19", orbitType: "MEO", details: { altitude: 23222, inclination: 56.5, eccentricity: 0.0005678, period: 845.4, apogee: 23300, perigee: 23144, semiMajorAxis: 29600, raan: 180.79, argumentOfPerigee: 145.68, meanAnomaly: 214.32 } },
+            { noradId: 41866, name: "GOES-16", orbitType: "GEO", details: { altitude: 35786, inclination: 0.05, eccentricity: 0.0000456, period: 1436.1, apogee: 35792, perigee: 35780, semiMajorAxis: 42164, raan: 250.12, argumentOfPerigee: 180.57, meanAnomaly: 179.43 } },
+            { noradId: 40928, name: "GOES-17", orbitType: "GEO", details: { altitude: 35786, inclination: 0.05, eccentricity: 0.0000456, period: 1436.1, apogee: 35792, perigee: 35780, semiMajorAxis: 42164, raan: 250.12, argumentOfPerigee: 180.57, meanAnomaly: 179.43 } },
+            { noradId: 37264, name: "INMARSAT-5 F1", orbitType: "GEO", details: { altitude: 35786, inclination: 0.05, eccentricity: 0.0000234, period: 1436.1, apogee: 35790, perigee: 35782, semiMajorAxis: 42164, raan: 317.57, argumentOfPerigee: 200.35, meanAnomaly: 159.65 } },
+            { noradId: 39084, name: "LANDSAT-8", orbitType: "POLAR", details: { altitude: 705, inclination: 98.2, eccentricity: 0.0001498, period: 98.8, apogee: 708, perigee: 702, semiMajorAxis: 7078, raan: 150.23, argumentOfPerigee: 85.68, meanAnomaly: 274.42 } },
+            { noradId: 42064, name: "LANDSAT-9", orbitType: "POLAR", details: { altitude: 705, inclination: 98.2, eccentricity: 0.0001498, period: 98.8, apogee: 708, perigee: 702, semiMajorAxis: 7078, raan: 150.23, argumentOfPerigee: 85.68, meanAnomaly: 274.42 } },
+            { noradId: 40699, name: "SENTINEL-1A", orbitType: "POLAR", details: { altitude: 693, inclination: 98.18, eccentricity: 0.0001234, period: 98.6, apogee: 696, perigee: 690, semiMajorAxis: 7066, raan: 105.68, argumentOfPerigee: 95.43, meanAnomaly: 264.67 } },
+            { noradId: 42063, name: "SENTINEL-2A", orbitType: "POLAR", details: { altitude: 786, inclination: 98.18, eccentricity: 0.0001234, period: 100.5, apogee: 789, perigee: 783, semiMajorAxis: 7159, raan: 105.68, argumentOfPerigee: 95.43, meanAnomaly: 264.67 } }
+        ];
+
+        // Orbital calculations
+        function calculateOrbitalPeriod(semiMajorAxis) {
+            const periodSeconds = 2 * Math.PI * Math.sqrt(Math.pow(semiMajorAxis, 3) / MU_KM);
+            return periodSeconds / 60;
+        }
+
+        function calculateVelocity(altitude, semiMajorAxis) {
+            const r = EARTH_RADIUS_KM + altitude;
+            return Math.sqrt(MU_KM * (2 / r - 1 / semiMajorAxis));
+        }
+
+        function calculateOrbitPath(orbitalElements) {
+            const points = [];
+            const { semiMajorAxis, eccentricity, inclination = 0, raan = 0, argumentOfPerigee = 0 } = orbitalElements;
+            const incRad = (inclination * Math.PI) / 180;
+            const raanRad = (raan * Math.PI) / 180;
+            const argPerigeeRad = (argumentOfPerigee * Math.PI) / 180;
+            
+            for (let i = 0; i <= 360; i++) {
+                const trueAnomaly = (i * 2 * Math.PI) / 360;
+                const r = (semiMajorAxis * (1 - eccentricity * eccentricity)) / (1 + eccentricity * Math.cos(trueAnomaly));
+                const xOrbital = r * Math.cos(trueAnomaly);
+                const yOrbital = r * Math.sin(trueAnomaly);
+                const x1 = xOrbital * Math.cos(argPerigeeRad) - yOrbital * Math.sin(argPerigeeRad);
+                const y1 = xOrbital * Math.sin(argPerigeeRad) + yOrbital * Math.cos(argPerigeeRad);
+                const x2 = x1;
+                const y2 = y1 * Math.cos(incRad);
+                const z2 = y1 * Math.sin(incRad);
+                const x = x2 * Math.cos(raanRad) - y2 * Math.sin(raanRad);
+                const y = x2 * Math.sin(raanRad) + y2 * Math.cos(raanRad);
+                const z = z2;
+                points.push([x * 0.001, y * 0.001, z * 0.001]);
+            }
+            return points;
+        }
+
+        function calculatePosition(orbitalElements, timeOffsetMinutes = 0) {
+            const { semiMajorAxis, eccentricity, inclination = 0, raan = 0, argumentOfPerigee = 0, meanAnomaly = 0 } = orbitalElements;
+            const periodMinutes = calculateOrbitalPeriod(semiMajorAxis);
+            const meanMotion = (2 * Math.PI) / periodMinutes;
+            const currentMeanAnomaly = meanAnomaly + (meanMotion * timeOffsetMinutes);
+            let E = currentMeanAnomaly;
+            for (let i = 0; i < 10; i++) { E = currentMeanAnomaly + eccentricity * Math.sin(E); }
+            const trueAnomaly = 2 * Math.atan2(Math.sqrt(1 + eccentricity) * Math.sin(E / 2), Math.sqrt(1 - eccentricity) * Math.cos(E / 2));
+            const r = (semiMajorAxis * (1 - eccentricity * eccentricity)) / (1 + eccentricity * Math.cos(trueAnomaly));
+            const xOrbital = r * Math.cos(trueAnomaly);
+            const yOrbital = r * Math.sin(trueAnomaly);
+            const incRad = (inclination * Math.PI) / 180;
+            const raanRad = (raan * Math.PI) / 180;
+            const argPerigeeRad = (argumentOfPerigee * Math.PI) / 180;
+            const x1 = xOrbital * Math.cos(argPerigeeRad) - yOrbital * Math.sin(argPerigeeRad);
+            const y1 = xOrbital * Math.sin(argPerigeeRad) + yOrbital * Math.cos(argPerigeeRad);
+            const x2 = x1;
+            const y2 = y1 * Math.cos(incRad);
+            const z2 = y1 * Math.sin(incRad);
+            const x = x2 * Math.cos(raanRad) - y2 * Math.sin(raanRad);
+            const y = x2 * Math.sin(raanRad) + y2 * Math.cos(raanRad);
+            const z = z2;
+            const velocity = calculateVelocity(r - EARTH_RADIUS_KM, semiMajorAxis);
+            return { position: [x * 0.001, y * 0.001, z * 0.001], velocity, altitude: r - EARTH_RADIUS_KM };
+        }
+
+        function ecefToGeodetic(x, y, z) {
+            const a = 6378.137, f = 1 / 298.257223563, e2 = 2 * f - f * f;
+            const lon = Math.atan2(y, x);
+            const p = Math.sqrt(x * x + y * y);
+            let lat = Math.atan2(z, p * (1 - e2));
+            for (let i = 0; i < 5; i++) {
+                const N = a / Math.sqrt(1 - e2 * Math.sin(lat) * Math.sin(lat));
+                lat = Math.atan2(z + e2 * N * Math.sin(lat), p);
+            }
+            const alt = p / Math.cos(lat) - a / Math.sqrt(1 - e2 * Math.sin(lat) * Math.sin(lat));
+            return { lat: (lat * 180) / Math.PI, lon: (lon * 180) / Math.PI, alt };
+        }
+
+        function getOrbitColor(orbitType) {
+            const colors = { 'LEO': '#00ff88', 'MEO': '#00d4ff', 'GEO': '#ff6b35', 'POLAR': '#ff00ff' };
+            return colors[orbitType] || '#ffffff';
+        }
+
+        // Three.js Scene
+        class EarthScene {
+            constructor(container) {
+                this.container = container;
+                this.satellites = [];
+                this.selectedSatellite = null;
+                this.timeOffset = 0;
+                this.init();
+            }
+
+            init() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.camera.position.set(20, 10, 20);
+                
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setPixelRatio(window.devicePixelRatio);
+                this.container.appendChild(this.renderer.domElement);
+
+                this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                this.controls.minDistance = 10;
+                this.controls.maxDistance = 100;
+
+                // Lighting
+                const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+                this.scene.add(ambientLight);
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+                directionalLight.position.set(10, 10, 5);
+                this.scene.add(directionalLight);
+
+                // Stars
+                this.addStars();
+
+                // Earth
+                this.addEarth();
+
+                // Animation loop
+                this.animate();
+
+                // Resize handler
+                window.addEventListener('resize', () => this.onResize());
+            }
+
+            addStars() {
+                const starsGeometry = new THREE.BufferGeometry();
+                const starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 });
+                const starsVertices = [];
+                for (let i = 0; i < 5000; i++) {
+                    const x = (Math.random() - 0.5) * 600;
+                    const y = (Math.random() - 0.5) * 600;
+                    const z = (Math.random() - 0.5) * 600;
+                    starsVertices.push(x, y, z);
+                }
+                starsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starsVertices, 3));
+                const stars = new THREE.Points(starsGeometry, starsMaterial);
+                this.scene.add(stars);
+            }
+
+            addEarth() {
+                // Earth sphere
+                const earthGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 64, 64);
+                const earthMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x1a4a6e,
+                    emissive: 0x0a1520,
+                    specular: 0x111111,
+                    shininess: 15
+                });
+                this.earth = new THREE.Mesh(earthGeometry, earthMaterial);
+                this.scene.add(this.earth);
+
+                // Atmosphere glow
+                const atmosphereGeometry = new THREE.SphereGeometry(EARTH_RADIUS * 1.05, 64, 64);
+                const atmosphereMaterial = new THREE.ShaderMaterial({
+                    vertexShader: `varying vec3 vNormal; void main() { vNormal = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                    fragmentShader: `varying vec3 vNormal; void main() { float intensity = pow(0.7 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.0); gl_FragColor = vec4(0.3, 0.6, 1.0, 1.0) * intensity; }`,
+                    blending: THREE.AdditiveBlending,
+                    side: THREE.BackSide,
+                    transparent: true
+                });
+                const atmosphere = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
+                this.scene.add(atmosphere);
+            }
+
+            updateSatellites(satellites) {
+                // Remove old satellites
+                this.satellites.forEach(s => {
+                    this.scene.remove(s.orbitLine);
+                    this.scene.remove(s.marker);
+                    this.scene.remove(s.glow);
+                });
+                this.satellites = [];
+
+                // Add new satellites
+                satellites.forEach(satellite => {
+                    const orbitalElements = {
+                        semiMajorAxis: satellite.details.semiMajorAxis,
+                        eccentricity: satellite.details.eccentricity,
+                        inclination: satellite.details.inclination,
+                        raan: satellite.details.raan,
+                        argumentOfPerigee: satellite.details.argumentOfPerigee,
+                        meanAnomaly: satellite.details.meanAnomaly
+                    };
+
+                    const orbitPath = calculateOrbitPath(orbitalElements);
+                    const color = getOrbitColor(satellite.orbitType);
+
+                    // Orbit line
+                    const orbitGeometry = new THREE.BufferGeometry();
+                    const orbitPoints = orbitPath.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+                    orbitGeometry.setFromPoints(orbitPoints);
+                    const orbitMaterial = new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: 0.4 });
+                    const orbitLine = new THREE.Line(orbitGeometry, orbitMaterial);
+                    this.scene.add(orbitLine);
+
+                    // Initial position
+                    const position = calculatePosition(orbitalElements, this.timeOffset * 0.1);
+
+                    // Satellite marker
+                    const markerGeometry = new THREE.SphereGeometry(0.08, 16, 16);
+                    const markerMaterial = new THREE.MeshBasicMaterial({ color: color });
+                    const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+                    marker.position.set(position.position[0], position.position[1], position.position[2]);
+                    this.scene.add(marker);
+
+                    // Glow effect
+                    const glowGeometry = new THREE.SphereGeometry(0.15, 16, 16);
+                    const glowMaterial = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.3 });
+                    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+                    glow.position.copy(marker.position);
+                    this.scene.add(glow);
+
+                    this.satellites.push({
+                        satellite,
+                        orbitLine,
+                        marker,
+                        glow,
+                        orbitalElements
+                    });
+                });
+
+                this.updateSelectedSatellite();
+            }
+
+            updateSelectedSatellite() {
+                this.satellites.forEach(s => {
+                    const isSelected = this.selectedSatellite && s.satellite.noradId === this.selectedSatellite.noradId;
+                    s.orbitLine.material.opacity = isSelected ? 0.8 : 0.4;
+                    s.marker.geometry.radius = isSelected ? 0.15 : 0.08;
+                    s.glow.visible = isSelected;
+                });
+            }
+
+            selectSatellite(satellite) {
+                this.selectedSatellite = satellite;
+                this.updateSelectedSatellite();
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                
+                // Rotate Earth
+                if (this.earth) this.earth.rotation.y += 0.0002;
+
+                // Update satellite positions
+                this.timeOffset += 0.1;
+                this.satellites.forEach(s => {
+                    const position = calculatePosition(s.orbitalElements, this.timeOffset * 0.1);
+                    s.marker.position.set(position.position[0], position.position[1], position.position[2]);
+                    s.glow.position.copy(s.marker.position);
+                });
+
+                this.controls.update();
+                this.renderer.render(this.scene, this.camera);
+            }
+
+            onResize() {
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+
+            getSatelliteAtPosition(nearestToCamera) {
+                return nearestToCamera ? this.satellites[0]?.satellite : null;
+            }
+        }
+
+        // Context
+        const AppContext = createContext();
+
+        // Components
+        function Header({ activeTab, setActiveTab, currentTime }) {
+            const tabs = [
+                { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+                { id: 'orbits', label: 'Orbits', icon: '🛰️' },
+                { id: 'trajectory', label: 'Trajectory', icon: '🚀' }
+            ];
+
+            return (
+                <header className="header">
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <svg className="w-8 h-8 text-cyan-electric" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                            </svg>
+                            <h1 className="text-xl font-orbitron font-bold text-white tracking-wider">
+                                SATELLITE<span className="text-cyan-electric">VIS</span>
+                            </h1>
+                        </div>
+                    </div>
+                    <nav className="flex items-center gap-1">
+                        {tabs.map(tab => (
+                            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                                className={`px-4 py-2 rounded-md font-medium transition-all ${activeTab === tab.id ? 'bg-cyan-electric/20 text-cyan-electric border border-cyan-electric/50' : 'text-gray-400 hover:text-white hover:bg-space-light'}`}>
+                                <span className="mr-2">{tab.icon}</span>{tab.label}
+                            </button>
+                        ))}
+                    </nav>
+                    <div className="flex items-center gap-4">
+                        <div className="text-right">
+                            <div className="font-roboto-mono text-lg text-cyan-electric">{currentTime}</div>
+                            <div className="text-xs text-gray-400">UTC TIME</div>
+                        </div>
+                    </div>
+                </header>
+            );
+        }
+
+        function Sidebar({ satellites, selectedSatellite, onSelectSatellite, orbitFilters, onToggleFilter, searchQuery, onSearchChange }) {
+            const [localSearch, setLocalSearch] = useState('');
+
+            useEffect(() => {
+                const timer = setTimeout(() => onSearchChange(localSearch), 300);
+                return () => clearTimeout(timer);
+            }, [localSearch]);
+
+            const filteredSatellites = satellites.filter(s => {
+                if (!orbitFilters[s.orbitType]) return false;
+                if (localSearch && !s.name.toLowerCase().includes(localSearch.toLowerCase()) && !s.noradId.toString().includes(localSearch)) return false;
+                return true;
+            });
+
+            const orbitTypes = [
+                { id: 'LEO', label: 'LEO', color: '#00ff88' },
+                { id: 'MEO', label: 'MEO', color: '#00d4ff' },
+                { id: 'GEO', label: 'GEO', color: '#ff6b35' },
+                { id: 'POLAR', label: 'Polar', color: '#ff00ff' }
+            ];
+
+            return (
+                <aside className="sidebar">
+                    <div className="p-4 border-b border-white/10">
+                        <input type="text" placeholder="Search satellites..." value={localSearch} onChange={e => setLocalSearch(e.target.value)} className="input-field" />
+                    </div>
+                    <div className="p-4 border-b border-white/10">
+                        <h3 className="text-sm font-semibold text-gray-300 mb-3">Orbit Types</h3>
+                        <div className="space-y-2">
+                            {orbitTypes.map(type => (
+                                <label key={type.id} className="flex items-center gap-3 cursor-pointer">
+                                    <input type="checkbox" checked={orbitFilters[type.id]} onChange={() => onToggleFilter(type.id)} className="hidden" />
+                                    <div className={`w-5 h-5 border-2 rounded ${orbitFilters[type.id] ? 'bg-cyan-electric border-cyan-electric' : 'border-gray-500'}`}>
+                                        {orbitFilters[type.id] && <svg className="w-full h-full text-space-black" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: type.color }} />
+                                        <span className="text-sm text-gray-300">{type.label}</span>
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="p-4 border-b border-white/10">
+                        <div className="flex items-center justify-between text-sm">
+                            <span className="text-gray-400">Satellites</span>
+                            <span className="text-cyan-electric font-semibold">{filteredSatellites.length}</span>
+                        </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 400px)' }}>
+                        {filteredSatellites.map(satellite => (
+                            <div key={satellite.noradId} onClick={() => onSelectSatellite(satellite)}
+                                className={`p-3 cursor-pointer border-b border-white/10 transition-all ${selectedSatellite?.noradId === satellite.noradId ? 'bg-cyan-electric/10 border-l-2 border-cyan-electric' : 'hover:bg-space-light'}`}>
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: getOrbitColor(satellite.orbitType) }} />
+                                        <span className="font-medium text-sm text-white truncate">{satellite.name}</span>
+                                    </div>
+                                    <span className="text-xs text-gray-500">#{satellite.noradId}</span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1 text-xs text-gray-400">
+                                    <span style={{ color: getOrbitColor(satellite.orbitType) }}>{satellite.orbitType}</span>
+                                    <span>{satellite.details.altitude?.toFixed(0)} km</span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </aside>
+            );
+        }
+
+        function Dashboard({ selectedSatellite, timeOffset }) {
+            const currentData = useMemo(() => {
+                if (!selectedSatellite?.details) return null;
+                const { details } = selectedSatellite;
+                const orbitalElements = {
+                    semiMajorAxis: details.semiMajorAxis,
+                    eccentricity: details.eccentricity,
+                    inclination: details.inclination,
+                    raan: details.raan,
+                    argumentOfPerigee: details.argumentOfPerigee,
+                    meanAnomaly: details.meanAnomaly
+                };
+                const position = calculatePosition(orbitalElements, timeOffset * 0.1);
+                const geodetic = ecefToGeodetic(position.position[0] * 1000, position.position[1] * 1000, position.position[2] * 1000);
+                const period = calculateOrbitalPeriod(details.semiMajorAxis);
+                return { ...position, geodetic, period };
+            }, [selectedSatellite, timeOffset]);
+
+            if (!selectedSatellite) {
+                return (
+                    <div className="dashboard-panel">
+                        <div className="flex-1 flex items-center justify-center text-gray-400">
+                            <div className="text-center">
+                                <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                                <p className="text-lg">Select a satellite to view details</p>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            const { details, orbitType } = selectedSatellite;
+            const orbitStyle = { 'LEO': { color: '#00ff88', bg: 'rgba(0, 255, 136, 0.1)' }, 'MEO': { color: '#00d4ff', bg: 'rgba(0, 212, 255, 0.1)' }, 'GEO': { color: '#ff6b35', bg: 'rgba(255, 107, 53, 0.1)' }, 'POLAR': { color: '#ff00ff', bg: 'rgba(255, 0, 255, 0.1)' } }[orbitType] || { color: '#fff', bg: 'rgba(255,255,255,0.1)' };
+
+            return (
+                <div className="dashboard-panel">
+                    <div className="flex items-center gap-6 px-6 py-3 border-r border-white/10 min-w-[280px]">
+                        <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: orbitStyle.bg, border: `2px solid ${orbitStyle.color}` }}>
+                            <svg className="w-6 h-6" style={{ color: orbitStyle.color }} fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 className="font-orbitron font-bold text-white text-lg">{selectedSatellite.name}</h3>
+                            <div className="flex items-center gap-3 mt-1">
+                                <span className="px-2 py-0.5 rounded text-xs font-semibold" style={{ backgroundColor: orbitStyle.bg, color: orbitStyle.color }}>{orbitType}</span>
+                                <span className="text-gray-400 text-sm">NORAD: {selectedSatellite.noradId}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex-1 flex items-center justify-around">
+                        <div className="text-center px-6">
+                            <p className="text-xs text-gray-400 mb-1">ALTITUDE</p>
+                            <p className="text-2xl font-roboto-mono text-cyan-electric">{currentData?.altitude?.toFixed(1) || details.altitude?.toFixed(1) || '0'}</p>
+                            <p className="text-xs text-gray-500">km</p>
+                        </div>
+                        <div className="text-center px-6">
+                            <p className="text-xs text-gray-400 mb-1">VELOCITY</p>
+                            <p className="text-2xl font-roboto-mono text-cyan-electric">{currentData?.velocity?.toFixed(2) || '0.00'}</p>
+                            <p className="text-xs text-gray-500">km/s</p>
+                        </div>
+                        <div className="text-center px-6">
+                            <p className="text-xs text-gray-400 mb-1">PERIOD</p>
+                            <p className="text-2xl font-roboto-mono text-cyan-electric">{currentData?.period?.toFixed(1) || details.period?.toFixed(1) || '0'}</p>
+                            <p className="text-xs text-gray-500">min</p>
+                        </div>
+                        <div className="text-center px-6">
+                            <p className="text-xs text-gray-400 mb-1">INCLINATION</p>
+                            <p className="text-2xl font-roboto-mono text-cyan-electric">{details.inclination?.toFixed(1) || '0'}</p>
+                            <p className="text-xs text-gray-500">degrees</p>
+                        </div>
+                        <div className="text-center px-6">
+                            <p className="text-xs text-gray-400 mb-1">POSITION</p>
+                            <p className="text-sm font-roboto-mono text-cyan-electric">{currentData?.geodetic?.lat?.toFixed(2) || '0.00'}°</p>
+                            <p className="text-sm font-roboto-mono text-cyan-electric">{currentData?.geodetic?.lon?.toFixed(2) || '0.00'}°</p>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function TrajectoryCalculator() {
+            const [params, setParams] = useState({ name: '', launchLat: 28.5721, launchLong: -80.6480, targetAltitude: 400, inclination: 51.6, azimuth: 90 });
+            const [result, setResult] = useState(null);
+            const [loading, setLoading] = useState(false);
+
+            const calculateTrajectory = () => {
+                setLoading(true);
+                setTimeout(() => {
+                    const r1 = 6371, r2 = 6371 + params.targetAltitude;
+                    const vCircular = Math.sqrt(MU_KM / r1);
+                    const vTransfer = Math.sqrt(MU_KM * (2 / r2 - 2 / (r1 + r2)));
+                    const totalDeltaV = vTransfer - vCircular + (Math.sqrt(MU_KM / r2) - vTransfer);
+                    const transferTime = Math.PI * Math.sqrt(Math.pow((r1 + r2) / 2, 3) / MU_KM);
+                    const fuelMass = 5000 * (Math.exp(totalDeltaV / (350 * 9.81)) - 1);
+                    
+                    setResult({
+                        duration: (2 * transferTime / 60).toFixed(1),
+                        maxVelocity: vTransfer.toFixed(2),
+                        fuelRequired: Math.max(0, fuelMass).toFixed(0),
+                        successProbability: (95 - Math.abs(params.inclination - 90) * 0.5).toFixed(1)
+                    });
+                    setLoading(false);
+                }, 500);
+            };
+
+            return (
+                <div className="flex-1 p-6 overflow-y-auto">
+                    <div className="max-w-4xl mx-auto">
+                        <h2 className="text-2xl font-orbitron font-bold text-white mb-6">🚀 Launch Trajectory Calculator</h2>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="card">
+                                <h3 className="text-lg font-semibold text-cyan-electric mb-4">Launch Parameters</h3>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm text-gray-400 mb-2">Target Altitude (km)</label>
+                                        <input type="number" value={params.targetAltitude} onChange={e => setParams({...params, targetAltitude: parseFloat(e.target.value)})} className="input-field" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm text-gray-400 mb-2">Inclination (degrees)</label>
+                                        <input type="number" value={params.inclination} onChange={e => setParams({...params, inclination: parseFloat(e.target.value)})} className="input-field" />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm text-gray-400 mb-2">Launch Lat</label>
+                                            <input type="number" value={params.launchLat} onChange={e => setParams({...params, launchLat: parseFloat(e.target.value)})} className="input-field" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm text-gray-400 mb-2">Launch Long</label>
+                                            <input type="number" value={params.launchLong} onChange={e => setParams({...params, launchLong: parseFloat(e.target.value)})} className="input-field" />
+                                        </div>
+                                    </div>
+                                    <button onClick={calculateTrajectory} disabled={loading} className="w-full btn-primary">
+                                        {loading ? '⏳ Calculating...' : '🚀 Calculate Trajectory'}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="card">
+                                <h3 className="text-lg font-semibold text-cyan-electric mb-4">Results</h3>
+                                {result ? (
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="p-3 bg-space-light rounded text-center">
+                                            <p className="text-xs text-gray-400">Duration</p>
+                                            <p className="text-xl text-cyan-electric">{result.duration} min</p>
+                                        </div>
+                                        <div className="p-3 bg-space-light rounded text-center">
+                                            <p className="text-xs text-gray-400">Max Velocity</p>
+                                            <p className="text-xl text-orange-accent">{result.maxVelocity} km/s</p>
+                                        </div>
+                                        <div className="p-3 bg-space-light rounded text-center">
+                                            <p className="text-xs text-gray-400">Fuel Required</p>
+                                            <p className="text-xl text-purple-accent">{result.fuelRequired} kg</p>
+                                        </div>
+                                        <div className="p-3 bg-space-light rounded text-center">
+                                            <p className="text-xs text-gray-400">Success</p>
+                                            <p className="text-xl text-green-400">{result.successProbability}%</p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="text-center text-gray-400 py-8">Enter parameters and calculate</div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Main App
+        function App() {
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [satellites, setSatellites] = useState(sampleSatellites);
+            const [selectedSatellite, setSelectedSatellite] = useState(null);
+            const [orbitFilters, setOrbitFilters] = useState({ LEO: true, MEO: true, GEO: true, POLAR: true });
+            const [searchQuery, setSearchQuery] = useState('');
+            const [currentTime, setCurrentTime] = useState('');
+            const [timeOffset, setTimeOffset] = useState(0);
+            const sceneRef = useRef(null);
+            const containerRef = useRef(null);
+
+            useEffect(() => {
+                const updateTime = () => {
+                    const now = new Date();
+                    setCurrentTime(now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC' }) + ' UTC');
+                };
+                updateTime();
+                const interval = setInterval(updateTime, 1000);
+                return () => clearInterval(interval);
+            }, []);
+
+            useEffect(() => {
+                if (containerRef.current && !sceneRef.current) {
+                    sceneRef.current = new EarthScene(containerRef.current);
+                    const filtered = sampleSatellites.filter(s => orbitFilters[s.orbitType]);
+                    sceneRef.current.updateSatellites(filtered);
+                }
+            }, []);
+
+            useEffect(() => {
+                const filtered = sampleSatellites.filter(s => orbitFilters[s.orbitType]);
+                setSatellites(filtered);
+                if (sceneRef.current) {
+                    sceneRef.current.updateSatellites(filtered);
+                }
+            }, [orbitFilters]);
+
+            useEffect(() => {
+                const interval = setInterval(() => setTimeOffset(t => t + 1), 100);
+                return () => clearInterval(interval);
+            }, []);
+
+            const handleSelectSatellite = (satellite) => {
+                setSelectedSatellite(satellite);
+                if (sceneRef.current) {
+                    sceneRef.current.selectSatellite(satellite);
+                }
+            };
+
+            const toggleFilter = (type) => setOrbitFilters(f => ({ ...f, [type]: !f[type] }));
+
+            const filteredSatellites = satellites.filter(s => !searchQuery || s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.noradId.toString().includes(searchQuery));
+
+            return (
+                <div className="h-screen w-screen overflow-hidden">
+                    <Header activeTab={activeTab} setActiveTab={setActiveTab} currentTime={currentTime} />
+                    {activeTab !== 'trajectory' && (
+                        <>
+                            <Sidebar satellites={filteredSatellites} selectedSatellite={selectedSatellite} onSelectSatellite={handleSelectSatellite} orbitFilters={orbitFilters} onToggleFilter={toggleFilter} searchQuery={searchQuery} onSearchChange={setSearchQuery} />
+                            <main className="main-content">
+                                {activeTab === 'trajectory' ? <TrajectoryCalculator /> : (
+                                    <div className="absolute inset-0" ref={containerRef}></div>
+                                )}
+                            </main>
+                            <Dashboard selectedSatellite={selectedSatellite} timeOffset={timeOffset} />
+                        </>
+                    )}
+                    {activeTab === 'trajectory' && (
+                        <main className="fixed top-16 left-0 right-0 bottom-0">
+                            <TrajectoryCalculator />
+                        </main>
+                    )}
+                    {activeTab !== 'trajectory' && (
+                        <div className="absolute top-20 right-4 p-3 bg-space-dark/80 rounded-lg border border-white/10 z-10">
+                            <h4 className="text-xs font-semibold text-gray-400 mb-2">Orbit Types</h4>
+                            <div className="space-y-1">
+                                <div className="flex items-center gap-2 text-xs"><div className="w-3 h-3 rounded-full bg-green-leo"></div><span className="text-gray-300">LEO</span></div>
+                                <div className="flex items-center gap-2 text-xs"><div className="w-3 h-3 rounded-full bg-cyan-meo"></div><span className="text-gray-300">MEO</span></div>
+                                <div className="flex items-center gap-2 text-xs"><div className="w-3 h-3 rounded-full bg-orange-geo"></div><span className="text-gray-300">GEO</span></div>
+                                <div className="flex items-center gap-2 text-xs"><div className="w-3 h-3 rounded-full bg-magenta-polar"></div><span className="text-gray-300">Polar</span></div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // Render
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
