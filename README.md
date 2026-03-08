@@ -1,4 +1,4 @@
-# Satellite Orbit and Trajectory Visualizer
+# Satellite Orbit and Trajectory Visualizer (SOTV)
 
 A full-stack web application for 3D visualization of satellite orbits, real-time tracking, and launch trajectory simulations.
 
