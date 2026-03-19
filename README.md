@@ -202,3 +202,4 @@ MIT License
 
 - Satellite data from [CelesTrak](https://celestrak.org/)
 - Orbital calculations based on [SGP4](https://en.wikipedia.org/wiki/SGP4) simplified perturbation model
+- Developed by Jayaditya Malviya 
